@@ -1,0 +1,11 @@
+{
+	"id": "plantuml-exporter",
+	"name": "PlantUML Exporter",
+	"version": "1.0.0",
+	"minAppVersion": "0.15.0",
+	"description": "Exports PlantUML diagrams in the current note to images using the online PlantUML server.",
+	"author": "Suraj Singh",
+	"authorUrl": "",
+	"fundingUrl": "",
+	"isDesktopOnly": false
+}
