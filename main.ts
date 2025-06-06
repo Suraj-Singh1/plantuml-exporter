@@ -1,16 +1,16 @@
 import { App, Editor, MarkdownView, Modal, Notice, Plugin, PluginSettingTab, Setting, TFile, TAbstractFile } from 'obsidian';
 import { encode } from 'plantuml-encoder';
 
-// For remembering to rename these classes and interfaces!
-
 interface PlantUMLExporterSettings {
 	plantumlServerUrl: string;
 	outputFormat: 'png' | 'svg';
+	exportMode: 'newFile' | 'modifyFile'; // Added export mode setting
 }
 
 const DEFAULT_SETTINGS: PlantUMLExporterSettings = {
 	plantumlServerUrl: 'http://www.plantuml.com/plantuml',
-	outputFormat: 'png'
+	outputFormat: 'png',
+	exportMode: 'newFile' // Default to creating a new file
 }
 
 export default class PlantUMLExporterPlugin extends Plugin {
@@ -64,47 +64,62 @@ export default class PlantUMLExporterPlugin extends Plugin {
 		let match;
 		let newContent = fileContent;
 		let diagramsFound = false;
+		let blocksProcessed = 0;
 
-		while ((match = plantumlRegex.exec(fileContent)) !== null) {
+		// Use replace with a function to handle multiple blocks correctly
+		newContent = fileContent.replace(plantumlRegex, (originalBlock, plantumlCode) => {
 			diagramsFound = true;
-			const originalBlock = match[0];
-			const plantumlCode = match[1];
-
 			try {
 				const encoded = encode(plantumlCode);
 				const imageUrl = `${this.settings.plantumlServerUrl}/${this.settings.outputFormat}/${encoded}`;
 				const imageMarkdown = `![PlantUML Diagram](${imageUrl})`;
-				newContent = newContent.replace(originalBlock, imageMarkdown);
+				blocksProcessed++;
+				return imageMarkdown; // Return the replacement
 			} catch (error) {
 				console.error('Error encoding PlantUML:', error);
 				new Notice(`Error processing PlantUML block: ${error.message}`);
-				// Keep the original block if encoding fails
+				return originalBlock; // Keep the original block if encoding fails
 			}
-		}
+		});
+
 
 		if (!diagramsFound) {
 			new Notice('No PlantUML code blocks found in the current file.');
 			return;
 		}
 
-		// Create the new file
-		const newFileName = `${file.basename}-exported.md`;
-		const newFilePath = file.path.replace(file.name, newFileName);
+		if (newContent === fileContent) {
+		    new Notice('No changes made. Potential encoding errors occurred.');
+		    return;
+		}
 
-		try {
-		    // Check if file already exists
-		    const existingFile = this.app.vault.getAbstractFileByPath(newFilePath);
-		    if (existingFile instanceof TFile) {
-		        // Optionally ask user if they want to overwrite, or just overwrite
-		        await this.app.vault.modify(existingFile, newContent);
-		        new Notice(`Exported PlantUML diagrams to existing file: ${newFileName}`);
-		    } else {
-		        await this.app.vault.create(newFilePath, newContent);
-		        new Notice(`Exported PlantUML diagrams to new file: ${newFileName}`);
-		    }
-		} catch (error) {
-		    console.error('Error creating/writing exported file:', error);
-		    new Notice(`Error saving exported file: ${error.message}`);
+		// Perform action based on exportMode setting
+		if (this.settings.exportMode === 'newFile') {
+			// Create the new file
+			const newFileName = `${file.basename}-exported.md`;
+			const newFilePath = file.path.replace(file.name, newFileName);
+
+			try {
+			    const existingFile = this.app.vault.getAbstractFileByPath(newFilePath);
+			    if (existingFile instanceof TFile) {
+			        await this.app.vault.modify(existingFile, newContent);
+			        new Notice(`Updated existing exported file: ${newFileName} (${blocksProcessed} diagrams)`);
+			    } else {
+			        await this.app.vault.create(newFilePath, newContent);
+			        new Notice(`Exported PlantUML diagrams to new file: ${newFileName} (${blocksProcessed} diagrams)`);
+			    }
+			} catch (error) {
+			    console.error('Error creating/writing exported file:', error);
+			    new Notice(`Error saving exported file: ${error.message}`);
+			}
+		} else { // exportMode === 'modifyFile'
+			try {
+				await this.app.vault.modify(file, newContent);
+				new Notice(`Modified current file: ${file.name} (${blocksProcessed} diagrams replaced)`);
+			} catch (error) {
+				console.error('Error modifying current file:', error);
+				new Notice(`Error modifying file: ${error.message}`);
+			}
 		}
 	}
 }
@@ -131,7 +146,7 @@ class PlantUMLExporterSettingTab extends PluginSettingTab {
 				.setPlaceholder('Enter PlantUML server URL')
 				.setValue(this.plugin.settings.plantumlServerUrl)
 				.onChange(async (value) => {
-					this.plugin.settings.plantumlServerUrl = value || DEFAULT_SETTINGS.plantumlServerUrl;
+					this.plugin.settings.plantumlServerUrl = value.trim() || DEFAULT_SETTINGS.plantumlServerUrl;
 					await this.plugin.saveSettings();
 				}));
 
@@ -144,6 +159,19 @@ class PlantUMLExporterSettingTab extends PluginSettingTab {
 				.setValue(this.plugin.settings.outputFormat)
 				.onChange(async (value: 'png' | 'svg') => {
 					this.plugin.settings.outputFormat = value;
+					await this.plugin.saveSettings();
+				}));
+
+		// Add setting for export mode
+		new Setting(containerEl)
+			.setName('Export Mode')
+			.setDesc('Choose whether to create a new file or modify the current file.')
+			.addDropdown(dropdown => dropdown
+				.addOption('newFile', 'Create new file (*-exported.md)')
+				.addOption('modifyFile', 'Modify current file in place')
+				.setValue(this.plugin.settings.exportMode)
+				.onChange(async (value: 'newFile' | 'modifyFile') => {
+					this.plugin.settings.exportMode = value;
 					await this.plugin.saveSettings();
 				}));
 	}
